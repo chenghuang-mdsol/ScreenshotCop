@@ -18,18 +18,15 @@ namespace ScreenshotCop
             detector.LoadTemplate("template.gif");
             Console.WriteLine("Getting PNGs:");
             var suspects = Directory.EnumerateFiles(@"..\", "*.png", SearchOption.AllDirectories).ToArray();
-            detector.LoadSuspects(suspects);
-            var results = detector.DetectAndOutMatch();
+            var results = detector.DetectAndOutMatch(suspects);
             File.WriteAllLines("result.txt", results);
-            //foreach (var r in results) { Console.WriteLine(r); }
-            //Console.ReadKey();
         }
     }
 
     public class ImageDetector
     {
-        private Image<Bgr, byte> _template; // Image A
-        private Dictionary<string, Image<Bgr, byte>> _suspects;
+        private Image<Bgra, byte> _template; // Image A
+        private Dictionary<string, Image<Bgra, byte>> _suspects;
 
         public ImageDetector()
         {
@@ -37,47 +34,73 @@ namespace ScreenshotCop
         }
         public void LoadTemplate(string path)
         {
-            _template = new Image<Bgr, byte>(path); // Image A
+            _template = new Image<Bgra, byte>(path); // Image A
 
         }
-        public void LoadSuspects(string[] paths)
+        
+        public IEnumerable<string> DetectAndOutMatch(string[] sourceNames)
         {
-            _suspects = paths.ToDictionary(o=>o, o => new Image<Bgr, byte>(o));
-        }
-        public IEnumerable<string> DetectAndOutMatch()
-        {
-            foreach(var s in _suspects)
+            List<Task<string>> tasks = new List<Task<string>>();
+            for(int i = 0;  i < sourceNames.Count();i++)
             {
-                var result = DetectOne( s.Value, _template);
-                if (result)
+                var s = sourceNames[i];
+                var p = i;
+                var task = new Task<string>(() => 
                 {
-                    Console.WriteLine("{0} => {1}", s.Key, "Yes");
-                    yield return s.Key;
-                }
-                else
+                    using (var source = new Image<Bgra, byte>(s))
+                    {
+                        var result = DetectOne(source, _template);
+                        if (result == null)
+                        {
+                            return "[Error]"+ s;
+                        }
+                        if (result !=null && result.Value)
+                        {
+
+                            Console.WriteLine("{0} => {1}", s, "Yes");
+                            return s;
+                        }
+                        else
+                        {
+                            if (p % 100 == 0)
+                            {
+                                Console.WriteLine("{0} / {1}", p, sourceNames.Count());
+                            }
+                        }
+                    }
+                    return null;
+                });
+                tasks.Add(task);
+            }
+            foreach (var task in tasks)
+            {
+                task.Start();
+            }
+            Task.WaitAll(tasks.ToArray());
+            return tasks.Where(t=>t.Result!=null).Select(t=>t.Result).ToList();
+        }
+        private bool? DetectOne(Image<Bgra, byte> source, Image<Bgra, byte> template)
+        {
+            try
+            {
+                using (Image<Gray, float> result = source.MatchTemplate(template, Emgu.CV.CvEnum.TemplateMatchingType.CcoeffNormed))
                 {
-                    Console.WriteLine("{0} => {1}", s.Key, "No");
+                    double[] minValues, maxValues;
+                    Point[] minLocations, maxLocations;
+                    result.MinMax(out minValues, out maxValues, out minLocations, out maxLocations);
+
+                    if (maxValues[0] > 0.9)
+                    {
+                        return true;
+                    }
+                    return false;
                 }
             }
-        }
-        private bool DetectOne(Image<Bgr, byte> source, Image<Bgr, byte> template)
-        {
+            catch 
+            {
+                return null;
+            }
             
-            using (Image<Gray, float> result = source.MatchTemplate(template, Emgu.CV.CvEnum.TemplateMatchingType.CcoeffNormed))
-            {
-                double[] minValues, maxValues;
-                Point[] minLocations, maxLocations;
-                result.MinMax(out minValues, out maxValues, out minLocations, out maxLocations);
-
-                if (maxValues[0] > 0.9)
-                {
-                    // This is a match. Do something with it, for example draw a rectangle around it.
-                    //Rectangle match = new Rectangle(maxLocations[0], template.Size);
-                    //imageToShow.Draw(match, new Bgr(Color.Red), 3);
-                    return true;
-                }
-                return false;
-            }
         }
     }
 }
